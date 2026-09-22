@@ -1,0 +1,17 @@
+# Bí mật
+.env
+.streamlit/secrets.toml
+
+# Dữ liệu vận hành (không commit)
+downloaded_laws/
+chroma_db/
+audit_reports/
+logs/
+.tmp_uploads/
+*.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

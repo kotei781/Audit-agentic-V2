@@ -1,0 +1,43 @@
+# ============================================================
+# Agentic AI Audit System — phụ thuộc
+# Cài đặt:  pip install -r requirements.txt
+# ============================================================
+
+# --- Gemini SDK ---
+google-genai>=1.0.0,<2.0.0
+
+# --- Vector DB cho tầng RAG ---
+chromadb>=0.5.0,<2.0.0
+
+# --- Model & validation ---
+pydantic>=2.7.0,<3.0.0
+
+# --- Cấu hình ---
+python-dotenv>=1.0.0,<2.0.0
+
+# --- Đọc tài liệu đầu vào ---
+pdfplumber>=0.11.0,<1.0.0
+pypdf>=4.2.0,<7.0.0
+python-docx>=1.1.0,<2.0.0
+openpyxl>=3.1.0,<4.0.0
+
+# --- Giao diện web ---
+streamlit>=1.37.0,<2.0.0
+
+# --- Background Worker (rate_limited_client.py / background_worker.py) ---
+apscheduler>=3.10.0,<4.0.0
+
+# ============================================================
+# GHI CHÚ VỀ TÁI LẬP MÔI TRƯỜNG
+# ------------------------------------------------------------
+# Với hệ thống kiểm toán, khoảng phiên bản như trên là CHƯA ĐỦ: kết quả phải
+# tái lập được tại thời điểm phát hành báo cáo. Sau khi môi trường chạy ổn,
+# hãy chốt phiên bản chính xác:
+#     pip freeze > requirements.lock.txt
+# và commit file .lock cùng mã nguồn.
+#
+# THƯ VIỆN ĐÃ LOẠI BỎ:
+#   - SQLAlchemy: bản cũ khai báo nhưng không dùng dòng nào. Khi nào thật sự
+#     kết nối CSDL sản xuất (PostgreSQL/SQL Server) thì thêm lại kèm driver.
+#   - requests: chức năng tải luật từ URL đã bị gỡ (SSRF + không kiểm soát
+#     nguồn). Văn bản luật nay do Admin chủ động nạp vào kho.
