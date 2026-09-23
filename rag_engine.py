@@ -161,3 +161,21 @@ def query_rag_engine(
     except Exception as e:
         logger.error(f"Lỗi xảy ra trong quá trình truy vấn RAG: {e}")
         return []
+
+def collection_stats(chroma_collection) -> Dict[str, Any]:
+    """
+    Thống kê kho vector: tổng chunk và số chunk theo từng văn bản.
+    """
+    try:
+        total = chroma_collection.count()
+        by_source: Dict[str, int] = {}
+        if total:
+            data = chroma_collection.get(include=["metadatas"])
+            for metadata in data.get("metadatas", []) or []:
+                name = (metadata or {}).get("source", "unknown")
+                by_source[name] = by_source.get(name, 0) + 1
+        return {"available": True, "total_chunks": total, "by_source": by_source}
+    except Exception as e:
+        logger.error(f"Lỗi khi lấy thống kê collection: {e}")
+        return {"available": False, "total_chunks": 0, "by_source": {}, "error": str(e)}
+
