@@ -177,3 +177,36 @@ def collection_stats(chroma_collection=None) -> Dict[str, Any]:
         logger.error(f"Lỗi khi lấy thống kê ChromaDB: {e}")
         return {"available": False, "total_chunks": 0}
 
+def ingest_law_to_vector_db(documents_or_filepath, chroma_collection=None, gemini_client=None, **kwargs):
+    """
+    Hàm bọc tương thích ngược cho tên gọi cũ 'ingest_law_to_vector_db'.
+    Điều hướng toàn bộ dữ liệu tới hàm 'index_documents_safely'.
+    """
+    # Nếu truyền vào là danh sách tài liệu
+    if isinstance(documents_or_filepath, list):
+        return index_documents_safely(
+            documents=documents_or_filepath,
+            chroma_collection=chroma_collection,
+            gemini_client=gemini_client,
+            **kwargs
+        )
+    # Nếu truyền vào là đường dẫn file đơn lẻ
+    elif isinstance(documents_or_filepath, str):
+        doc = {"filename": documents_or_filepath, "text": ""}
+        if os.path.exists(documents_or_filepath):
+            try:
+                with open(documents_or_filepath, "r", encoding="utf-8") as f:
+                    doc["text"] = f.read()
+            except Exception as e:
+                logger.error(f"Lỗi đọc file trong ingest_law_to_vector_db: {e}")
+        return index_documents_safely(
+            documents=[doc],
+            chroma_collection=chroma_collection,
+            gemini_client=gemini_client,
+            **kwargs
+        )
+    else:
+        logger.warning(f"Định dạng đầu vào không hợp lệ cho ingest_law_to_vector_db: {type(documents_or_filepath)}")
+        return None
+
+
