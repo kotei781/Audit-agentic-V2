@@ -78,7 +78,7 @@ def index_documents_safely(
     documents: List[Dict[str, Any]],
     chroma_collection,
     gemini_client,
-    batch_size: int = 50,
+    batch_size: int = 20,
     cooldown_seconds: float = 3.0
 ):
     """
