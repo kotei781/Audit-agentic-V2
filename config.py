@@ -83,7 +83,7 @@ ADMIN_PASSWORD = _read_secret("ADMIN_PASSWORD", "")
 # ============================================================
 # 3) CẤU HÌNH MODEL GEMINI
 # ============================================================
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 # Model embedding dùng cho Vector DB. Gemini embedding xử lý tiếng Việt tốt
 # hơn đáng kể so với all-MiniLM mặc định của ChromaDB.
