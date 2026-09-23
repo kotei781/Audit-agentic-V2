@@ -130,6 +130,7 @@ def index_documents_safely(
         logger.info("Hoàn tất toàn bộ tiến trình Indexing dữ liệu vào Vector DB.")
         return {
             "status": "success",
+            "chunks": total_indexed,
             "total_chunks": total_indexed,
             "docs_processed": total_docs
         }
@@ -137,6 +138,7 @@ def index_documents_safely(
         logger.error(f"Lỗi hệ thống trong index_documents_safely: {e}")
         return {
             "status": "error",
+            "chunks": total_indexed,
             "total_chunks": total_indexed,
             "message": str(e)
         }
