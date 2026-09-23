@@ -43,7 +43,9 @@ import config
 import data_ingestion
 from data_ingestion import IngestionError, compute_sha256, extract_text
 
-logger = config.get_logger("rag_engine")
+logger = config.get_//logger("rag_engine")
+if logger.hasHandlers():
+    logger.handlers.clear()
 
 
 # ============================================================

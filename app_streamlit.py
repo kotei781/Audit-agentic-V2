@@ -175,7 +175,8 @@ def render_admin() -> None:
         with col_b:
             overwrite = st.checkbox("Ghi đè nếu trùng tên file", value=False)
 
-        if st.button("💾 Lưu & Index", type="primary", disabled=not uploaded_files):
+        if st.button("💾 Lưu & Index", type="primary", disabled=not uploaded_files or st.session_state.get("indexing", False)):
+            st.session_state.indexing = True
             for uploaded in uploaded_files:
                 with st.status(f"Đang xử lý `{uploaded.name}`...", expanded=False) as status:
                     try:
@@ -205,6 +206,8 @@ def render_admin() -> None:
                     except Exception as exc:  # noqa: BLE001
                         status.update(label=f"Lỗi: {uploaded.name}", state="error")
                         _show_exception(exc)
+            st.session_state.indexing = False
+            st.rerun()
 
     # ---------- TAB 2: QUẢN LÝ ----------
     with tab_manage:
@@ -233,14 +236,20 @@ def render_admin() -> None:
             with action_col1:
                 target = st.selectbox("Chọn văn bản", [info.filename for info in laws])
                 if st.button("🔄 Index lại văn bản này"):
-                    try:
-                        result = rag_engine.ingest_law_to_vector_db(
-                            config.LAW_STORAGE_DIR / target, force_reindex=True
-                        )
-                        st.success(f"Đã index lại: {result['chunks']} chunk.")
-                        st.rerun()
-                    except Exception as exc:  # noqa: BLE001
-                        _show_exception(exc)
+                    if st.session_state.get("indexing", False):
+                        st.warning("Hệ thống đang trong quá trình index, vui lòng đợi...")
+                    else:
+                        st.session_state.indexing = True
+                        try:
+                            result = rag_engine.ingest_law_to_vector_db(
+                                config.LAW_STORAGE_DIR / target, force_reindex=True
+                            )
+                            st.success(f"Đã index lại: {result['chunks']} chunk.")
+                            st.rerun()
+                        except Exception as exc:  # noqa: BLE001
+                            _show_exception(exc)
+                        finally:
+                            st.session_state.indexing = False
 
                 if st.button("🗑️ Xóa khỏi kho", type="secondary"):
                     try:
