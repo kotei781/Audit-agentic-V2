@@ -80,52 +80,66 @@ def index_documents_safely(
     gemini_client,
     batch_size: int = 20,
     cooldown_seconds: float = 3.0
-):
+) -> Dict[str, Any]:
     """
     Tiến hành Chunking và Indexing dữ liệu vào ChromaDB.
     Hỗ trợ Resume bằng .upsert() và bỏ qua batch hỏng cục bộ.
     """
     total_docs = len(documents)
+    total_indexed = 0
     logger.info(f"Bắt đầu tiến trình Indexing tối ưu cho {total_docs} văn bản.")
 
-    for doc_idx, doc in enumerate(documents, 1):
-        file_name = doc.get("filename", f"doc_{doc_idx}")
-        chunks = doc.get("chunks", [])
+    try:
+        for doc_idx, doc in enumerate(documents, 1):
+            file_name = doc.get("filename", f"doc_{doc_idx}")
+            chunks = doc.get("chunks", [])
 
-        if not chunks and "text" in doc:
-            chunks = chunk_legal_document(doc["text"], file_name)
+            if not chunks and "text" in doc:
+                chunks = chunk_legal_document(doc["text"], file_name)
 
-        if not chunks:
-            logger.warning(f"File '{file_name}' không chứa dữ liệu chữ để index.")
-            continue
-
-        logger.info(f"[{doc_idx}/{total_docs}] Đang xử lý: {file_name} ({len(chunks)} chunks)")
-
-        for i in range(0, len(chunks), batch_size):
-            batch_chunks = chunks[i:i + batch_size]
-            batch_texts = [c["text"] for c in batch_chunks]
-            batch_ids = [f"{file_name}_chunk_{i + idx}" for idx in range(len(batch_chunks))]
-            batch_metadatas = [c.get("metadata", {"source": file_name}) for c in batch_chunks]
-
-            try:
-                embeddings = embed_with_retry(gemini_client, batch_texts, output_dim=768)
-
-                chroma_collection.upsert(
-                    ids=batch_ids,
-                    embeddings=embeddings,
-                    documents=batch_texts,
-                    metadatas=batch_metadatas
-                )
-
-                time.sleep(cooldown_seconds)
-
-            except Exception as e:
-                logger.error(f"Lỗi tại batch {i // batch_size + 1} của file {file_name}: {e}")
+            if not chunks:
+                logger.warning(f"File '{file_name}' không chứa dữ liệu chữ để index.")
                 continue
 
-        logger.info(f"Hoàn tất xử lý văn bản: {file_name}")
+            logger.info(f"[{doc_idx}/{total_docs}] Đang xử lý: {file_name} ({len(chunks)} chunks)")
 
-    logger.info("Hoàn tất toàn bộ tiến trình Indexing dữ liệu vào Vector DB.")
+            for i in range(0, len(chunks), batch_size):
+                batch_chunks = chunks[i:i + batch_size]
+                batch_texts = [c["text"] for c in batch_chunks]
+                batch_ids = [f"{file_name}_chunk_{i + idx}" for idx in range(len(batch_chunks))]
+                batch_metadatas = [c.get("metadata", {"source": file_name}) for c in batch_chunks]
+
+                try:
+                    embeddings = embed_with_retry(gemini_client, batch_texts, output_dim=768)
+
+                    chroma_collection.upsert(
+                        ids=batch_ids,
+                        embeddings=embeddings,
+                        documents=batch_texts,
+                        metadatas=batch_metadatas
+                    )
+                    total_indexed += len(batch_chunks)
+                    time.sleep(cooldown_seconds)
+
+                except Exception as e:
+                    logger.error(f"Lỗi tại batch {i // batch_size + 1} của file {file_name}: {e}")
+                    continue
+
+            logger.info(f"Hoàn tất xử lý văn bản: {file_name}")
+
+        logger.info("Hoàn tất toàn bộ tiến trình Indexing dữ liệu vào Vector DB.")
+        return {
+            "status": "success",
+            "total_chunks": total_indexed,
+            "docs_processed": total_docs
+        }
+    except Exception as e:
+        logger.error(f"Lỗi hệ thống trong index_documents_safely: {e}")
+        return {
+            "status": "error",
+            "total_chunks": total_indexed,
+            "message": str(e)
+        }
 
 def query_rag_engine(
     query: str,
