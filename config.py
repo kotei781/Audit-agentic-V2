@@ -34,11 +34,19 @@ load_dotenv()
 # ============================================================
 BASE_DIR = Path(__file__).resolve().parent
 
-LAW_STORAGE_DIR = Path(os.getenv("LAW_STORAGE_DIR", BASE_DIR / "downloaded_laws"))
-CHROMA_DB_DIR = Path(os.getenv("CHROMA_DB_DIR", BASE_DIR / "chroma_db"))
-OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "audit_reports"))
-TMP_DIR = Path(os.getenv("TMP_DIR", BASE_DIR / ".tmp_uploads"))
-LOG_DIR = Path(os.getenv("LOG_DIR", BASE_DIR / "logs"))
+# FIX (Vector DB rỗng — nguyên nhân gốc #2): nếu chỉ dùng Path(os.getenv(...))
+# mà không .resolve(), một CHROMA_DB_DIR truyền vào dạng tương đối (ví dụ
+# "./chroma_db") sẽ được hiểu tương đối theo CWD tại thời điểm chạy — không
+# phải theo BASE_DIR. Khi tiến trình index (ví dụ script ingest chạy tay) và
+# tiến trình phục vụ (Uvicorn/Streamlit) khởi động từ hai thư mục làm việc
+# khác nhau, mỗi bên sẽ tự tạo một thư mục chroma_db/ rỗng của riêng mình ->
+# Agent luôn thấy Vector DB rỗng dù đã index. .resolve() ép mọi đường dẫn,
+# kể cả khi override qua biến môi trường, về dạng tuyệt đối và nhất quán.
+LAW_STORAGE_DIR = Path(os.getenv("LAW_STORAGE_DIR", BASE_DIR / "downloaded_laws")).resolve()
+CHROMA_DB_DIR = Path(os.getenv("CHROMA_DB_DIR", BASE_DIR / "chroma_db")).resolve()
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", BASE_DIR / "audit_reports")).resolve()
+TMP_DIR = Path(os.getenv("TMP_DIR", BASE_DIR / ".tmp_uploads")).resolve()
+LOG_DIR = Path(os.getenv("LOG_DIR", BASE_DIR / "logs")).resolve()
 
 for _directory in (LAW_STORAGE_DIR, CHROMA_DB_DIR, OUTPUT_DIR, TMP_DIR, LOG_DIR):
     _directory.mkdir(parents=True, exist_ok=True)
@@ -84,6 +92,11 @@ EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
 # gemini-embedding-001 mặc định 3072 chiều; hạ xuống 768 để giảm dung lượng
 # ChromaDB ~4 lần mà chất lượng truy hồi gần như không đổi.
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "768"))
+# FIX (429 RESOURCE_EXHAUSTED — nguyên nhân gốc #1): batch quá nhỏ (từng bị
+# để =1) khiến một file 287 chunk bắn ra 287 request embed riêng lẻ trong
+# chưa đầy 1 phút, chạm ngưỡng requests/phút của Free Tier. Giữ batch trong
+# khoảng khuyến nghị 50-100. Việc throttling giữa các batch + xử lý retryDelay
+# khi bị 429 nằm ở rag_engine.embed_texts().
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "50"))
 
 # temperature = 0.0 giúp GIẢM PHƯƠNG SAI đầu ra giữa các lần chạy.
@@ -93,8 +106,13 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "8192"))
 
 # Số lần thử lại khi gọi API lỗi tạm thời (429/500/503).
-API_MAX_RETRIES = int(os.getenv("API_MAX_RETRIES", "3"))
-API_RETRY_BASE_DELAY = float(os.getenv("API_RETRY_BASE_DELAY", "2.0"))
+# FIX (503 UNAVAILABLE — nguyên nhân gốc #2): lịch nghỉ cũ 2s -> 4s quá ngắn
+# khi hạ tầng Google đang tắc nghẽn ở giờ cao điểm và request bị dội lại gần
+# như ngay lập tức. Đổi sang lịch nghỉ tăng dần rõ rệt: 5s -> 15s -> 30s.
+# API_MAX_RETRIES = 4 để cả 3 mốc nghỉ trong API_RETRY_DELAYS đều thực sự
+# được dùng hết trước khi báo lỗi (lần thử cuối cùng không cần nghỉ thêm).
+API_MAX_RETRIES = int(os.getenv("API_MAX_RETRIES", "4"))
+API_RETRY_DELAYS = [5.0, 15.0, 30.0]
 
 # Phiên bản prompt — ghi vào báo cáo để có thể tái lập/đối chiếu về sau.
 PROMPT_VERSION = "2026.09-v2-rag"

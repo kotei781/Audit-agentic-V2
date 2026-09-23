@@ -291,8 +291,16 @@ class AuditAgent:
     # ---------- Gọi API có retry ----------
     def _call_gemini(self, user_prompt: str):
         """
-        Gọi Gemini với Structured Output; retry theo backoff lũy thừa cho các
-        lỗi tạm thời (429 rate limit, 500/503 server).
+        Gọi Gemini với Structured Output; retry theo lịch backoff tăng dần
+        (5s -> 15s -> 30s, xem config.API_RETRY_DELAYS) cho các lỗi tạm thời
+        (429 rate limit, 500/503 server — đặc biệt 503 UNAVAILABLE khi
+        Google quá tải ở giờ cao điểm).
+
+        FIX (503 UNAVAILABLE — nguyên nhân gốc #1 "phình prompt"): việc
+        giảm kích thước prompt thực tế (~3.000 ký tự thay vì nhồi toàn bộ
+        kho luật khi Vector DB rỗng) nằm ở chỗ Vector DB được index đúng —
+        xem fix CHROMA_DB_DIR trong config.py và embed_texts() trong
+        rag_engine.py. Hàm này chỉ chịu trách nhiệm cho phần backoff.
         """
         from google.genai import types
 
@@ -323,7 +331,7 @@ class AuditAgent:
                 if not retriable or attempt == config.API_MAX_RETRIES:
                     break
 
-                delay = config.API_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                delay = config.API_RETRY_DELAYS[min(attempt - 1, len(config.API_RETRY_DELAYS) - 1)]
                 logger.warning(
                     "Gọi Gemini thất bại (lần %d/%d): %s — thử lại sau %.1fs",
                     attempt, config.API_MAX_RETRIES, exc, delay,

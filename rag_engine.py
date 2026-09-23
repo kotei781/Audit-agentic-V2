@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -189,6 +190,28 @@ def _l2_normalize(vector: Sequence[float]) -> List[float]:
     return [v / norm for v in vector]
 
 
+_RETRY_DELAY_PATTERN = re.compile(r"retrydelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
+
+
+def _extract_retry_delay(exc: Exception, default: float = 20.0) -> float:
+    """
+    Bóc số giây `retryDelay` mà Google trả về kèm lỗi 429 RESOURCE_EXHAUSTED
+    (ví dụ '...retryDelay: 41s...'). Không tìm thấy thì dùng mặc định.
+    """
+    match = _RETRY_DELAY_PATTERN.search(str(exc))
+    if match:
+        try:
+            return float(match.group(1))
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in ("429", "resource_exhausted", "quota", "rate limit"))
+
+
 def embed_texts(texts: Sequence[str], task_type: str = "RETRIEVAL_DOCUMENT") -> List[List[float]]:
     """
     Sinh embedding cho danh sách text bằng Gemini, chia lô để tránh quá tải.
@@ -197,6 +220,15 @@ def embed_texts(texts: Sequence[str], task_type: str = "RETRIEVAL_DOCUMENT") -> 
         texts: danh sách đoạn text.
         task_type: "RETRIEVAL_DOCUMENT" khi index, "RETRIEVAL_QUERY" khi truy vấn.
                    Dùng đúng task_type cải thiện đáng kể chất lượng truy hồi.
+
+    FIX (429 RESOURCE_EXHAUSTED — nguyên nhân gốc #2 "thiếu throttling"):
+      * Chủ động nghỉ 1s giữa các batch để không dồn dập vượt hạn ngạch
+        requests/phút (đặc biệt ở Free Tier).
+      * Nếu vẫn dính 429, đọc đúng `retryDelay` Google yêu cầu trong thông
+        báo lỗi rồi nghỉ đúng khoảng đó trước khi thử lại batch đó (tối đa
+        config.API_MAX_RETRIES lần) — thay vì thất bại ngay lập tức và bị
+        ingest_all_persisted_laws() nuốt lỗi, bỏ qua cả file (nguyên nhân
+        gốc #1 của lỗi "Vector DB rỗng").
     """
     if not texts:
         return []
@@ -206,28 +238,54 @@ def embed_texts(texts: Sequence[str], task_type: str = "RETRIEVAL_DOCUMENT") -> 
     client = _get_genai_client()
     vectors: List[List[float]] = []
     batch_size = max(1, config.EMBEDDING_BATCH_SIZE)
+    total_batches = math.ceil(len(texts) / batch_size)
 
-    for start in range(0, len(texts), batch_size):
+    for batch_index, start in enumerate(range(0, len(texts), batch_size)):
         batch = list(texts[start : start + batch_size])
-        try:
-            response = client.models.embed_content(
-                model=config.EMBEDDING_MODEL,
-                contents=batch,
-                config=types.EmbedContentConfig(
-                    task_type=task_type,
-                    output_dimensionality=config.EMBEDDING_DIM,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
+        response = None
+        last_error: Optional[Exception] = None
+
+        for attempt in range(1, config.API_MAX_RETRIES + 1):
+            try:
+                response = client.models.embed_content(
+                    model=config.EMBEDDING_MODEL,
+                    contents=batch,
+                    config=types.EmbedContentConfig(
+                        task_type=task_type,
+                        output_dimensionality=config.EMBEDDING_DIM,
+                    ),
+                )
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                if not _is_rate_limited(exc) or attempt == config.API_MAX_RETRIES:
+                    raise EmbeddingError(
+                        f"Lỗi khi gọi API embedding ({config.EMBEDDING_MODEL}): {exc}"
+                    ) from exc
+
+                delay = _extract_retry_delay(exc)
+                logger.warning(
+                    "Embedding batch %d/%d bị chặn hạn ngạch 429 (lần thử %d/%d) — "
+                    "nghỉ %.1fs theo retryDelay rồi thử lại.",
+                    batch_index + 1, total_batches, attempt, config.API_MAX_RETRIES, delay,
+                )
+                time.sleep(delay)
+
+        if response is None:  # pragma: no cover - vòng lặp trên luôn raise hoặc break trước
             raise EmbeddingError(
-                f"Lỗi khi gọi API embedding ({config.EMBEDDING_MODEL}): {exc}"
-            ) from exc
+                f"Lỗi khi gọi API embedding ({config.EMBEDDING_MODEL}): {last_error}"
+            ) from last_error
 
         for item in response.embeddings:
             values = list(item.values or [])
             if not values:
                 raise EmbeddingError("API embedding trả về vector rỗng.")
             vectors.append(_l2_normalize(values))
+
+        # Throttling chủ động giữa các batch — tránh dồn dập vượt hạn ngạch
+        # requests/phút ngay cả khi chưa bị Google trả về lỗi 429.
+        if start + batch_size < len(texts):
+            time.sleep(1)
 
     if len(vectors) != len(texts):
         raise EmbeddingError(
@@ -557,10 +615,17 @@ def extract_query_keywords(document_text: str, max_terms: int = 6) -> List[str]:
 
 
 def _build_subqueries(document_text: str) -> List[str]:
-    """Dựng danh sách truy vấn con: 1 truy vấn tổng thể + N truy vấn theo chủ đề."""
-    excerpt = (document_text or "").strip()[:1200]
-    queries = [excerpt] if excerpt else []
-    queries.extend(extract_query_keywords(document_text))
+    """
+    Dựng danh sách truy vấn con dùng cho multi-query retrieval.
+
+    FIX (nhiễu vector truy vấn RAG): bản cũ ghép thêm 1.200 ký tự trích thô
+    của chứng từ (đặc biệt với Excel: ký tự phân cách, số liệu, tên cột...)
+    làm một truy vấn riêng. Đưa dữ liệu bảng thô vào embedding như vậy làm
+    lệch vector ngữ nghĩa, kéo giảm độ tương đồng cosine với văn bản luật.
+    Nay CHỈ dùng các cụm từ khóa nghiệp vụ đã được suy luận qua
+    extract_query_keywords() — không còn query nào chứa raw text chứng từ.
+    """
+    queries = extract_query_keywords(document_text)
     # Khử trùng lặp nhưng giữ nguyên thứ tự ưu tiên.
     seen, unique = set(), []
     for query in queries:
