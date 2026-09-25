@@ -39,6 +39,7 @@ import report_exporter
 from audit_agent import AuditAgentError, NoLawCorpusError, run_agentic_audit
 from data_ingestion import IngestionError
 from human_review import auto_approve_all, run_cli_review
+from supervisor_agent import FlexibleSupervisor
 
 logger = config.get_logger("main")
 
@@ -180,6 +181,31 @@ def cmd_audit(args: argparse.Namespace) -> int:
     except AuditAgentError as exc:
         print(f"[LỖI] {exc}")
         return 1
+
+    # --- Tích hợp AI Giám sát (Supervisor) ---
+    print("\n>> [Supervisor] Đang thực hiện thẩm định độc lập báo cáo...")
+    try:
+        supervisor = FlexibleSupervisor()
+        sup_result = supervisor.supervise(
+            raw_content=document_text,
+            audit_json=report.to_dict()
+        )
+
+        status = sup_result.get("status")
+        tier = sup_result.get("evaluated_by_tier", "Unknown")
+
+        if status == "PASSED":
+            print(f"✅ SUPERVISOR: PASSED (Thẩm định bởi {tier}) - Báo cáo chính xác.")
+        elif status == "REJECTED":
+            print(f"⚠️  SUPERVISOR: REJECTED (Thẩm định bởi {tier}) - PHÁT HIỆN SAI SÓT!")
+            for d in sup_result.get("discrepancies", []):
+                print(f"   - [{d.get('type')}] Trường {d.get('field')}: Báo cáo '{d.get('audit_reported')}' vs Thực tế '{d.get('actual_raw_data')}'")
+                print(f"     Giải thích: {d.get('explanation')}")
+        else:
+            print(f"⚠️  SUPERVISOR: Trạng thái không xác định ({status})")
+
+    except Exception as exc:
+        print(f"⚠️  AI Giám sát gặp sự cố: {exc}. Hệ thống tiếp tục luồng kiểm toán.")
 
     summary = report.summary()
     print(

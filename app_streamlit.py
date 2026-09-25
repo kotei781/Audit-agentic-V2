@@ -24,6 +24,7 @@ và ghi nhật ký người thao tác — vì báo cáo kiểm toán cần biế
 from __future__ import annotations
 
 import traceback
+import os
 from pathlib import Path
 
 import streamlit as st
@@ -35,6 +36,7 @@ import report_exporter
 from audit_agent import AuditAgentError, NoLawCorpusError, run_agentic_audit
 from data_ingestion import IngestionError
 from schemas import AuditReport, HumanDecision, RiskLevel, ViolationStatus
+from supervisor_agent import FlexibleSupervisor
 
 st.set_page_config(
     page_title="Agentic AI Audit System",
@@ -64,6 +66,7 @@ STATUS_TEXT = {
 def _init_state() -> None:
     defaults = {
         "report": None,
+        "supervisor_result": None,
         "admin_unlocked": False,
         "reviewer_id": "",
         "last_error": None,
@@ -158,7 +161,7 @@ def render_admin() -> None:
             icon="⚠️",
         )
 
-    tab_upload, tab_manage = st.tabs(["📥 Nạp văn bản luật", "🗂️ Kho luật hiện có"])
+    tab_upload, tab_manage, tab_supervisor = st.tabs(["📥 Nạp văn bản luật", "🗂️ Kho luật hiện có", "⚙️ Cấu hình AI Giám sát"])
 
     # ---------- TAB 1: UPLOAD ----------
     with tab_upload:
@@ -347,6 +350,19 @@ def _run_audit(uploaded, use_sample: bool, top_k: int) -> None:
                 top_k=top_k,
             )
 
+        # --- Tích hợp AI Giám sát (Supervisor) ---
+        try:
+            with st.spinner("🔍 AI Giám sát (Supervisor) đang thẩm định độc lập báo cáo..."):
+                supervisor = FlexibleSupervisor()
+                sup_result = supervisor.supervise(
+                    raw_content=document_text,
+                    audit_json=report.to_dict()
+                )
+                st.session_state.supervisor_result = sup_result
+        except Exception as exc:
+            st.warning(f"⚠️ AI Giám sát gặp sự cố nhưng hệ thống vẫn tiếp tục: {exc}")
+            st.session_state.supervisor_result = None
+
         st.session_state.report = report
         summary = report.summary()
         st.success(
@@ -365,6 +381,32 @@ def _run_audit(uploaded, use_sample: bool, top_k: int) -> None:
 def _render_report(report: AuditReport) -> None:
     """Hiển thị kết quả + luồng kiểm duyệt con người + nút xuất báo cáo."""
     st.header("📋 Kết quả đối chiếu")
+
+    # --- Hiển thị kết quả AI Giám sát ---
+    sup_res = st.session_state.get("supervisor_result")
+    if sup_res:
+        status = sup_res.get("status")
+        tier = sup_res.get("evaluated_by_tier", "Unknown")
+
+        if status == "PASSED":
+            st.success(f"✅ Đã thẩm định bởi AI Giám sát ({tier}) - Không phát hiện lỗi sai")
+        elif status == "REJECTED":
+            st.error(f"⚠️ CẢNH BÁO TỪ AI GIÁM SÁT: Báo cáo có dấu hiệu chứa sai sót/ảo giác!")
+            with st.expander("Chi tiết sai sót phát hiện bởi Supervisor", expanded=True):
+                discrepancies = sup_res.get("discrepancies", [])
+                if not discrepancies:
+                    st.write("Không có chi tiết lỗi cụ thể.")
+                else:
+                    for d in discrepancies:
+                        st.markdown(f"""
+                        - **Loại lỗi:** `{d.get('type')}` | **Trường:** `{d.get('field')}`
+                        - **AI Kiểm toán báo:** `{d.get('audit_reported')}`
+                        - **Thực tế gốc:** `{d.get('actual_raw_data')}`
+                        - **Giải thích:** {d.get('explanation')}
+                        """)
+                st.info(f"Nhận xét tổng quan: {sup_res.get('supervisor_comment', '')}")
+        else:
+            st.warning(f"AI Giám sát trả về trạng thái không xác định: {status}")
 
     summary = report.summary()
     cols = st.columns(5)
