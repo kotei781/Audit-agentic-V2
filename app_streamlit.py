@@ -274,6 +274,112 @@ def render_admin() -> None:
                         except Exception as exc:  # noqa: BLE001
                             _show_exception(exc)
 
+    # ---------- TAB 3: SUPERVISOR CONTROL PANEL ----------
+    with tab_supervisor:
+        st.subheader("⚙️ Cấu hình Model & API Keys cho AI Giám sát (Supervisor)")
+        st.caption("Quản lý Model và Keys cho chuỗi Fallback. Thay đổi tại đây sẽ cập nhật trực tiếp vào file .env")
+
+        # Định nghĩa cấu hình chi tiết cho từng Tier
+        # Format: { var_name: (label, type, options/default) }
+        config_schema = {
+            "TIER1": {
+                "model": ("Model Tier 1", "selectbox", ['gemini-1.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'], "GEMINI_MODEL_TIER1"),
+                "key": ("API Key Tier 1", "password", None, "GEMINI_API_KEY_1")
+            },
+            "TIER2": {
+                "model": ("Model Tier 2", "selectbox", ['gemini-1.5-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-pro'], "GEMINI_MODEL_TIER2"),
+                "key": ("API Key Tier 2", "password", None, "GEMINI_API_KEY_2")
+            },
+            "TIER3": {
+                "model": ("Model Tier 3", "text", "llama-3.3-70b-versatile", "GROQ_MODEL"),
+                "key": ("API Key Tier 3", "password", None, "GROQ_API_KEY")
+            },
+            "TIER4": {
+                "model": ("Model Tier 4", "selectbox", ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo'], "OPENAI_MODEL"),
+                "key": ("API Key Tier 4", "password", None, "OPENAI_API_KEY")
+            },
+            "TIER5": {
+                "model": ("Model Tier 5 (Local)", "text", "llama3", "OLLAMA_MODEL"),
+                "url": ("Ollama Base URL", "text", "http://localhost:11434", "OLLAMA_BASE_URL"),
+            },
+        }
+
+        with st.form(key="supervisor_full_config_form"):
+            user_inputs = {}
+
+            # Hiển thị theo cột để gọn gàng
+            cols = st.columns(3)
+            for i, (tier_id, fields) in enumerate(config_schema.items()):
+                with cols[i % 3]:
+                    st.markdown(f"**{tier_id}**")
+                    for field_id, (label, field_type, opt, env_var) in fields.items():
+                        current_val = os.getenv(env_var, opt if opt and isinstance(opt, str) else "")
+
+                        if field_type == "selectbox":
+                            user_inputs[env_var] = st.selectbox(label, options=opt, index=opt.index(current_val) if current_val in opt else 0, key=f"{tier_id}_{field_id}")
+                        elif field_type == "password":
+                            user_inputs[env_var] = st.text_input(label, value=current_val, type="password", key=f"{tier_id}_{field_id}")
+                        else: # text
+                            user_inputs[env_var] = st.text_input(label, value=current_val, key=f"{tier_id}_{field_id}")
+                    st.divider()
+
+            submit_btn = st.form_submit_button("💾 Lưu Cấu Hình AI Giám Sát", type="primary")
+
+            if submit_btn:
+                try:
+                    env_path = Path(".env")
+                    if not env_path.exists():
+                        lines = []
+                    else:
+                        with open(env_path, "r", encoding="utf-8") as f:
+                            lines = f.readlines()
+
+                    # Cập nhật hoặc thêm mới các biến env
+                    for env_var, new_val in user_inputs.items():
+                        found = False
+                        for idx, line in enumerate(lines):
+                            if line.startswith(f"{env_var}="):
+                                lines[idx] = f"{env_var}={new_val}\n"
+                                found = True
+                                break
+                        if not found:
+                            lines.append(f"{env_var}={new_val}\n")
+
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.writelines(lines)
+
+                    # Cập nhật os.environ để áp dụng ngay lập tức cho session hiện tại
+                    for env_var, new_val in user_inputs.items():
+                        os.environ[env_var] = new_val
+
+                    st.success("✅ Đã cập nhật cấu hình Model và API Keys thành công!")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"❌ Lỗi khi lưu cấu hình: {exc}")
+
+        st.divider()
+        if st.button("🧪 Kiểm tra kết nối Keys"):
+            with st.spinner("Đang test kết nối tới các API..."):
+                try:
+                    # Test bằng cách khởi tạo Supervisor (Sẽ load key từ os.environ vừa update)
+                    sup = FlexibleSupervisor()
+                    test_results = []
+
+                    # Kiểm tra xem các Key quan trọng có giá trị không
+                    for tier_id, fields in config_schema.items():
+                        for field_id, (label, field_type, opt, env_var) in fields.items():
+                            if field_type == "password":
+                                val = os.getenv(env_var)
+                                if val and val not in ["mã_key_gemini_1_của_cậu", "mã_key_groq_của_cậu"]:
+                                    test_results.append(f"✅ {label}: Key đã sẵn sàng")
+                                else:
+                                    test_results.append(f"❌ {label}: Key trống hoặc chưa thay đổi giá trị ví dụ")
+
+                    for res in test_results:
+                        st.write(res)
+                except Exception as exc:
+                    st.error(f"Lỗi khi test kết nối: {exc}")
+
 
 # ============================================================
 # MÀN HÌNH USER (KIỂM TOÁN VIÊN)

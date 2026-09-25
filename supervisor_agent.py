@@ -51,7 +51,7 @@ If no errors are found, 'status' should be 'PASSED' and 'discrepancies' should b
 
 class FlexibleSupervisor:
     def __init__(self):
-        # Load keys from environment
+        # Load keys and models from environment
         self.keys = {
             "GEMINI_1": os.getenv("GEMINI_API_KEY_1") or os.getenv("GEMINI_API_KEY"),
             "GEMINI_2": os.getenv("GEMINI_API_KEY_2"),
@@ -60,12 +60,38 @@ class FlexibleSupervisor:
         }
 
         # Define the Fallback Chain (Multi-Tier Matrix)
+        # Model names are loaded from env to support dynamic config via UI
         self.fallback_chain = [
-            {"tier": "Tier 1 - Gemini 1.5 Pro", "provider": "gemini", "model": "gemini-1.5-pro", "key_id": "GEMINI_1"},
-            {"tier": "Tier 2 - Gemini 1.5 Flash", "provider": "gemini", "model": "gemini-1.5-flash", "key_id": "GEMINI_2"},
-            {"tier": "Tier 3 - Groq/DeepSeek", "provider": "openai_compat", "model": "llama-3.3-70b", "key_id": "GROQ_DEEPSEEK"},
-            {"tier": "Tier 4 - OpenAI GPT-4o-mini", "provider": "openai", "model": "gpt-4o-mini", "key_id": "OPENAI"},
-            {"tier": "Tier 5 - Ollama Local", "provider": "ollama", "model": "llama3", "key_id": None},
+            {
+                "tier": "Tier 1 - Gemini Primary",
+                "provider": "gemini",
+                "model": os.getenv("GEMINI_MODEL_TIER1", "gemini-1.5-pro"),
+                "key_id": "GEMINI_1"
+            },
+            {
+                "tier": "Tier 2 - Gemini Secondary",
+                "provider": "gemini",
+                "model": os.getenv("GEMINI_MODEL_TIER2", "gemini-1.5-flash"),
+                "key_id": "GEMINI_2"
+            },
+            {
+                "tier": "Tier 3 - Groq/DeepSeek",
+                "provider": "openai_compat",
+                "model": os.getenv("GROQ_MODEL", "llama-3.3-70b"),
+                "key_id": "GROQ_DEEPSEEK"
+            },
+            {
+                "tier": "Tier 4 - OpenAI",
+                "provider": "openai",
+                "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+                "key_id": "OPENAI"
+            },
+            {
+                "tier": "Tier 5 - Ollama Local",
+                "provider": "ollama",
+                "model": os.getenv("OLLAMA_MODEL", "llama3"),
+                "key_id": None
+            },
         ]
 
     def _call_gemini(self, model_name: str, api_key: str, prompt: str) -> str:
@@ -86,7 +112,8 @@ class FlexibleSupervisor:
 
     def _call_ollama(self, model_name: str, prompt: str) -> str:
         # Local fallback
-        url = "http://localhost:11434/api/generate"
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        url = f"{base_url}/api/generate"
         payload = {
             "model": model_name,
             "prompt": f"{SUPERVISOR_SYSTEM_PROMPT}\n\n{prompt}",
