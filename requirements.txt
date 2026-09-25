@@ -4,6 +4,7 @@
 # ============================================================
 
 # --- Gemini SDK ---
+google-generativeai>=0.8.0
 google-genai>=1.0.0,<2.0.0
 
 # --- Vector DB cho tầng RAG ---
@@ -23,6 +24,8 @@ openpyxl>=3.1.0,<4.0.0
 
 # --- Giao diện web ---
 streamlit>=1.37.0,<2.0.0
+openai>=1.0.0
+requests>=2.28.0
 
 # --- Background Worker (rate_limited_client.py / background_worker.py) ---
 apscheduler>=3.10.0,<4.0.0
