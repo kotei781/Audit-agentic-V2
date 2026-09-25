@@ -121,16 +121,35 @@ GIỌNG ĐIỆU: Chuyên nghiệp, khách quan, tỉ mỉ, không suy diễn ngo
 """
 
 
-def _build_user_prompt(document_text: str, law_context: str) -> str:
-    """Đóng gói prompt đối soát, có delimiter tách bạch dữ liệu và chỉ thị."""
+def _build_user_prompt(
+    document_text: str, law_context: str
+) -> tuple[str, Optional[Dict[str, int]]]:
+    """
+    Đóng gói prompt đối soát, có delimiter tách bạch dữ liệu và chỉ thị.
+
+    Trả về (prompt, truncation_info). truncation_info là None nếu không bị
+    cắt, hoặc dict {"original_chars", "kept_chars", "dropped_chars"} nếu
+    chứng từ vượt config.MAX_DOCUMENT_CHARS — để caller (run_audit) LOG RÕ
+    RÀNG và GHI VÀO BÁO CÁO, thay vì chỉ nhét 1 dòng ghi chú chìm trong prompt
+    mà chỉ AI nhìn thấy, con người kiểm duyệt không hề hay biết.
+    """
     document_text = (document_text or "").strip()
-    if len(document_text) > config.MAX_DOCUMENT_CHARS:
+    truncation_info: Optional[Dict[str, int]] = None
+
+    original_len = len(document_text)
+    if original_len > config.MAX_DOCUMENT_CHARS:
+        kept_len = config.MAX_DOCUMENT_CHARS
+        truncation_info = {
+            "original_chars": original_len,
+            "kept_chars": kept_len,
+            "dropped_chars": original_len - kept_len,
+        }
         document_text = (
-            document_text[: config.MAX_DOCUMENT_CHARS]
+            document_text[:kept_len]
             + "\n[... tài liệu đã bị cắt bớt do vượt giới hạn độ dài ...]"
         )
 
-    return f"""\
+    prompt = f"""\
 <<<LAW_CONTEXT>>>
 {law_context}
 <<<END_LAW_CONTEXT>>>
@@ -146,6 +165,7 @@ không đủ căn cứ kết luận), thêm MỘT phần tử vào mảng "findi
 schema đã cấu hình. Nếu rà soát xong không phát hiện vấn đề nào, trả về
 findings = [].
 """
+    return prompt, truncation_info
 
 
 # ============================================================
@@ -291,16 +311,8 @@ class AuditAgent:
     # ---------- Gọi API có retry ----------
     def _call_gemini(self, user_prompt: str):
         """
-        Gọi Gemini với Structured Output; retry theo lịch backoff tăng dần
-        (5s -> 15s -> 30s, xem config.API_RETRY_DELAYS) cho các lỗi tạm thời
-        (429 rate limit, 500/503 server — đặc biệt 503 UNAVAILABLE khi
-        Google quá tải ở giờ cao điểm).
-
-        FIX (503 UNAVAILABLE — nguyên nhân gốc #1 "phình prompt"): việc
-        giảm kích thước prompt thực tế (~3.000 ký tự thay vì nhồi toàn bộ
-        kho luật khi Vector DB rỗng) nằm ở chỗ Vector DB được index đúng —
-        xem fix CHROMA_DB_DIR trong config.py và embed_texts() trong
-        rag_engine.py. Hàm này chỉ chịu trách nhiệm cho phần backoff.
+        Gọi Gemini với Structured Output; retry theo backoff lũy thừa cho các
+        lỗi tạm thời (429 rate limit, 500/503 server).
         """
         from google.genai import types
 
@@ -331,7 +343,8 @@ class AuditAgent:
                 if not retriable or attempt == config.API_MAX_RETRIES:
                     break
 
-                delay = config.API_RETRY_DELAYS[min(attempt - 1, len(config.API_RETRY_DELAYS) - 1)]
+                # [UPDATED] Chuyển sang Exponential Backoff: base * (2 ^ (attempt-1))
+                delay = config.API_RETRY_BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
                     "Gọi Gemini thất bại (lần %d/%d): %s — thử lại sau %.1fs",
                     attempt, config.API_MAX_RETRIES, exc, delay,
@@ -439,7 +452,22 @@ class AuditAgent:
         )
 
         # --- Bước 2: gọi Gemini ---
-        response = self._call_gemini(_build_user_prompt(document_text, law_context))
+        # [UPDATED] Sử dụng return value mới của _build_user_prompt để lấy truncation_info
+        user_prompt, truncation_info = _build_user_prompt(document_text, law_context)
+
+        # [NEW FEATURE] Log chi tiết khi chứng từ bị cắt bớt
+        if truncation_info:
+            logger.warning(
+                "⚠ CHỨNG TỪ BỊ CẮT BỚT trước khi gửi AI: giữ %s/%s ký tự "
+                "(mất %s ký tự cuối — có thể bao gồm cả sheet/dữ liệu bị bỏ "
+                "sót hoàn toàn). Cân nhắc tăng config.MAX_DOCUMENT_CHARS hoặc "
+                "chia nhỏ chứng từ thành nhiều lần kiểm toán.",
+                f"{truncation_info['kept_chars']:,}",
+                f"{truncation_info['original_chars']:,}",
+                f"{truncation_info['dropped_chars']:,}",
+            )
+
+        response = self._call_gemini(user_prompt)
         findings = self._extract_findings(response)
 
         # --- Bước 3: kiểm chứng trích dẫn ---
@@ -469,6 +497,13 @@ class AuditAgent:
             temperature=config.TEMPERATURE,
             findings=findings,
             runtime_metadata=config.describe_runtime(),
+            # [NEW FEATURE] Ghi vết cắt bớt vào báo cáo chính thức
+            document_truncated=truncation_info is not None,
+            truncation_details=(
+                f"Chứng từ gốc {truncation_info['original_chars']:,} ký tự, hệ thống chỉ "
+                f"giữ lại {truncation_info['kept_chars']:,} ký tự đầu tiên (mất "
+                f"{truncation_info['dropped_chars']:,} ký tự cuối) trước khi gửi cho AI."
+            ) if truncation_info else None,
         )
 
         summary = report.summary()

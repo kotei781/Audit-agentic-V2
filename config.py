@@ -113,6 +113,8 @@ MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "8192"))
 # được dùng hết trước khi báo lỗi (lần thử cuối cùng không cần nghỉ thêm).
 API_MAX_RETRIES = int(os.getenv("API_MAX_RETRIES", "4"))
 API_RETRY_DELAYS = [5.0, 15.0, 30.0]
+# [UPDATED] Thêm base delay cho cơ chế Exponential Backoff trong audit_agent.py
+API_RETRY_BASE_DELAY = float(os.getenv("API_RETRY_BASE_DELAY", "2.0"))
 
 # Phiên bản prompt — ghi vào báo cáo để có thể tái lập/đối chiếu về sau.
 PROMPT_VERSION = "2026.09-v2-rag"

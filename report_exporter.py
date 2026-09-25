@@ -167,6 +167,12 @@ def build_docx_bytes(report: AuditReport, reviewer_id: Optional[str] = None) -> 
     document.add_heading("1. Thông tin phiên kiểm toán", level=1)
 
     law_files = sorted({ref.filename for ref in report.law_sources})
+
+    # [UPDATED] Xử lý hiển thị trạng thái truncation trong bảng thông tin
+    truncation_status = "Không" if not report.document_truncated else (
+        f"Có ({report.truncation_details or 'Chi tiết không xác định'})"
+    )
+
     _add_kv_table(
         document,
         [
@@ -180,6 +186,7 @@ def build_docx_bytes(report: AuditReport, reviewer_id: Optional[str] = None) -> 
             ("Mô hình embedding", report.embedding_model or "(không dùng)"),
             ("Phiên bản prompt", report.prompt_version),
             ("Temperature", f"{report.temperature}"),
+            ("Tài liệu bị cắt bớt", truncation_status), # [UPDATED]
             ("Người kiểm duyệt", reviewer_id or _collect_reviewers(report)),
         ],
     )

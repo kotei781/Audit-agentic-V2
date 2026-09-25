@@ -282,6 +282,16 @@ class AuditReport(BaseModel):
     findings: List[ViolationCheckResult] = Field(default_factory=list)
     runtime_metadata: Dict[str, Any] = Field(default_factory=dict)
 
+    # [NEW FEATURE] Thêm thông tin về việc cắt bớt tài liệu đầu vào
+    document_truncated: bool = Field(
+        default=False,
+        description="True nếu chứng từ gốc bị cắt bớt do vượt quá MAX_DOCUMENT_CHARS."
+    )
+    truncation_details: Optional[str] = Field(
+        default=None,
+        description="Chi tiết số ký tự bị cắt bớt."
+    )
+
     # ----- Truy vấn tiện ích -----
     def approved_findings(self) -> List[ViolationCheckResult]:
         return [f for f in self.findings if f.human_decision == HumanDecision.APPROVED]
