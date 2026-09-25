@@ -305,53 +305,115 @@ class AuditAgent:
                 "Chưa cài google-genai. Chạy: pip install google-genai"
             ) from exc
 
-        self.model = model or config.GEMINI_MODEL
-        self.client = genai.Client(api_key=config.GEMINI_API_KEY)
+        # Quản lý Model và Keys xoay vòng
+        self.primary_model = model or config.AUDIT_GEMINI_MODEL or config.GEMINI_MODEL
+        self.fallback_model = "gemini-1.5-flash"
 
-    # ---------- Gọi API có retry ----------
+        # Thu thập các key không rỗng
+        self.api_keys = [
+            k for k in [config.AUDIT_GEMINI_KEY_1, config.AUDIT_GEMINI_KEY_2, config.AUDIT_GEMINI_KEY_3]
+            if k and k.strip()
+        ]
+
+        if not self.api_keys:
+            # Dự phòng cuối cùng dùng GEMINI_API_KEY chung nếu không có key audit riêng
+            if config.GEMINI_API_KEY:
+                self.api_keys = [config.GEMINI_API_KEY]
+            else:
+                raise AuditAgentError("Không tìm thấy API Key nào khả dụng cho Audit Agent.")
+
+        # Trạng thái cooldown: {key: expiry_timestamp}
+        self.cooldowns: Dict[str, float] = {}
+        self.current_key_index = 0
+        self.client = None
+        self._init_client()
+
+    def _init_client(self, key: Optional[str] = None):
+        """Khởi tạo client Gemini với key cụ thể hoặc key hiện tại."""
+        from google import genai
+        target_key = key or self.api_keys[self.current_key_index]
+        self.client = genai.Client(api_key=target_key)
+
+    def _get_available_key(self) -> Optional[str]:
+        """Tìm key tiếp theo không trong trạng thái cooldown."""
+        now = time.time()
+        # Làm sạch cooldowns hết hạn
+        self.cooldowns = {k: v for k, v in self.cooldowns.items() if v > now}
+
+        for _ in range(len(self.api_keys)):
+            key = self.api_keys[self.current_key_index]
+            if key not in self.cooldowns:
+                return key
+
+            # Xoay sang key tiếp theo
+            self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+
+        return None
+
+    # ---------- Gọi API có rotation, cooldown và fallback ----------
     def _call_gemini(self, user_prompt: str):
         """
-        Gọi Gemini với Structured Output; retry theo backoff lũy thừa cho các
-        lỗi tạm thời (429 rate limit, 500/503 server).
+        Gọi Gemini với cơ chế:
+        1. Key Rotation: Xoay qua các key khả dụng.
+        2. Key Cooldown: Key bị 429 sẽ bị khóa 60s.
+        3. Cross-Model Fallback: Nếu tất cả key fail cho primary_model, thử fallback_model.
         """
         from google.genai import types
 
-        generation_config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=config.TEMPERATURE,
-            max_output_tokens=config.MAX_OUTPUT_TOKENS,
-            response_mime_type="application/json",
-            response_schema=AgentResponse,  # NGUỒN SCHEMA DUY NHẤT
-        )
+        def execute_with_client(model_name: str, key: str):
+            # Cập nhật client cho key/model mới
+            self._init_client(key)
 
-        last_error: Optional[Exception] = None
+            generation_config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=config.TEMPERATURE,
+                max_output_tokens=config.MAX_OUTPUT_TOKENS,
+                response_mime_type="application/json",
+                response_schema=AgentResponse,
+            )
+            return self.client.models.generate_content(
+                model=model_name,
+                contents=user_prompt,
+                config=generation_config,
+            )
 
+        # Thử với Primary Model
         for attempt in range(1, config.API_MAX_RETRIES + 1):
+            key = self._get_available_key()
+            if not key:
+                logger.warning("Tất cả API Keys đều đang trong cooldown. Chờ 5s...")
+                time.sleep(5)
+                continue
+
             try:
-                return self.client.models.generate_content(
-                    model=self.model,
-                    contents=user_prompt,
-                    config=generation_config,
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
+                return execute_with_client(self.primary_model, key)
+            except Exception as exc:
                 message = str(exc).lower()
-                retriable = any(
-                    token in message
-                    for token in ("429", "rate", "quota", "500", "503", "unavailable", "timeout", "deadline")
-                )
+                # Xử lý 429 - Rate Limit
+                if "429" in message or "quota" in message or "rate" in message:
+                    logger.warning("Key %s bị 429 Rate Limit. Đưa vào cooldown 60s.", key[:10] + "...")
+                    self.cooldowns[key] = time.time() + 60
+                    # Thử lại ngay lập tức với key khác (không tính vào API_MAX_RETRIES của cùng 1 key)
+                    continue
+
+                # Các lỗi tạm thời khác (500, 503) - dùng backoff
+                retriable = any(t in message for t in ("500", "503", "unavailable", "timeout"))
                 if not retriable or attempt == config.API_MAX_RETRIES:
+                    if attempt == config.API_MAX_RETRIES:
+                        logger.error("Đã thử hết số lần retry cho primary model.")
                     break
 
-                # [UPDATED] Chuyển sang Exponential Backoff: base * (2 ^ (attempt-1))
-                delay = config.API_RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                logger.warning(
-                    "Gọi Gemini thất bại (lần %d/%d): %s — thử lại sau %.1fs",
-                    attempt, config.API_MAX_RETRIES, exc, delay,
-                )
+                delay = config.API_RETRY_DELAYS[min(attempt - 1, len(config.API_RETRY_DELAYS) - 1)]
                 time.sleep(delay)
 
-        raise GeminiAPIError(f"Gọi Gemini thất bại: {last_error}") from last_error
+        # LAST RESORT: Cross-Model Fallback
+        logger.critical("⚠️ ALL KEYS EXHAUSTED cho %s. Thử Fallback Model: %s", self.primary_model, self.fallback_model)
+        try:
+            # Thử với model fallback bằng key đầu tiên (hoặc bất kỳ key nào)
+            fallback_key = self.api_keys[0]
+            return execute_with_client(self.fallback_model, fallback_key)
+        except Exception as final_exc:
+            raise GeminiAPIError(f"Thất bại hoàn toàn kể cả fallback: {final_exc}") from final_exc
 
     # ---------- Bóc findings từ response ----------
     def _extract_findings(self, response: Any) -> List[ViolationCheckResult]:
@@ -491,7 +553,8 @@ class AuditAgent:
                 for chunk in retrieved_chunks
             ],
             retrieval_mode=retrieval_mode,
-            model_used=self.model,
+            model_used=self.primary_model,
+
             embedding_model=config.EMBEDDING_MODEL if retrieval_mode == "rag" else "",
             prompt_version=config.PROMPT_VERSION,
             temperature=config.TEMPERATURE,

@@ -161,7 +161,7 @@ def render_admin() -> None:
             icon="⚠️",
         )
 
-    tab_upload, tab_manage, tab_supervisor = st.tabs(["📥 Nạp văn bản luật", "🗂️ Kho luật hiện có", "⚙️ Cấu hình AI Giám sát"])
+    tab_upload, tab_manage, tab_supervisor, tab_audit_config = st.tabs(["📥 Nạp văn bản luật", "🗂️ Kho luật hiện có", "⚙️ Cấu hình AI Giám sát", "🔍 Cấu hình AI Kiểm toán"])
 
     # ---------- TAB 1: UPLOAD ----------
     with tab_upload:
@@ -274,13 +274,12 @@ def render_admin() -> None:
                         except Exception as exc:  # noqa: BLE001
                             _show_exception(exc)
 
-    # ---------- TAB 3: SUPERVISOR CONTROL PANEL ----------
+    # ---------- TAB 3: CẤU HÌNH SUPERVISOR ----------
     with tab_supervisor:
         st.subheader("⚙️ Cấu hình Model & API Keys cho AI Giám sát (Supervisor)")
         st.caption("Quản lý Model và Keys cho chuỗi Fallback. Thay đổi tại đây sẽ cập nhật trực tiếp vào file .env")
 
         # Định nghĩa cấu hình chi tiết cho từng Tier
-        # Format: { var_name: (label, type, options/default) }
         config_schema = {
             "TIER1": {
                 "model": ("Model Tier 1", "selectbox", ['gemini-1.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash'], "GEMINI_MODEL_TIER1"),
@@ -306,35 +305,27 @@ def render_admin() -> None:
 
         with st.form(key="supervisor_full_config_form"):
             user_inputs = {}
-
-            # Hiển thị theo cột để gọn gàng
             cols = st.columns(3)
             for i, (tier_id, fields) in enumerate(config_schema.items()):
                 with cols[i % 3]:
                     st.markdown(f"**{tier_id}**")
                     for field_id, (label, field_type, opt, env_var) in fields.items():
                         current_val = os.getenv(env_var, opt if opt and isinstance(opt, str) else "")
-
                         if field_type == "selectbox":
                             user_inputs[env_var] = st.selectbox(label, options=opt, index=opt.index(current_val) if current_val in opt else 0, key=f"{tier_id}_{field_id}")
                         elif field_type == "password":
                             user_inputs[env_var] = st.text_input(label, value=current_val, type="password", key=f"{tier_id}_{field_id}")
-                        else: # text
+                        else:
                             user_inputs[env_var] = st.text_input(label, value=current_val, key=f"{tier_id}_{field_id}")
                     st.divider()
 
             submit_btn = st.form_submit_button("💾 Lưu Cấu Hình AI Giám Sát", type="primary")
-
             if submit_btn:
                 try:
                     env_path = Path(".env")
-                    if not env_path.exists():
-                        lines = []
+                    if not env_path.exists(): lines = []
                     else:
-                        with open(env_path, "r", encoding="utf-8") as f:
-                            lines = f.readlines()
-
-                    # Cập nhật hoặc thêm mới các biến env
+                        with open(env_path, "r", encoding="utf-8") as f: lines = f.readlines()
                     for env_var, new_val in user_inputs.items():
                         found = False
                         for idx, line in enumerate(lines):
@@ -342,30 +333,19 @@ def render_admin() -> None:
                                 lines[idx] = f"{env_var}={new_val}\n"
                                 found = True
                                 break
-                        if not found:
-                            lines.append(f"{env_var}={new_val}\n")
-
-                    with open(env_path, "w", encoding="utf-8") as f:
-                        f.writelines(lines)
-
-                    # Cập nhật os.environ để áp dụng ngay lập tức cho session hiện tại
-                    for env_var, new_val in user_inputs.items():
-                        os.environ[env_var] = new_val
-
+                        if not found: lines.append(f"{env_var}={new_val}\n")
+                    with open(env_path, "w", encoding="utf-8") as f: f.writelines(lines)
+                    for env_var, new_val in user_inputs.items(): os.environ[env_var] = new_val
                     st.success("✅ Đã cập nhật cấu hình Model và API Keys thành công!")
                     st.rerun()
-                except Exception as exc:
-                    st.error(f"❌ Lỗi khi lưu cấu hình: {exc}")
+                except Exception as exc: st.error(f"❌ Lỗi khi lưu cấu hình: {exc}")
 
         st.divider()
         if st.button("🧪 Kiểm tra kết nối Keys"):
             with st.spinner("Đang test kết nối tới các API..."):
                 try:
-                    # Test bằng cách khởi tạo Supervisor (Sẽ load key từ os.environ vừa update)
                     sup = FlexibleSupervisor()
                     test_results = []
-
-                    # Kiểm tra xem các Key quan trọng có giá trị không
                     for tier_id, fields in config_schema.items():
                         for field_id, (label, field_type, opt, env_var) in fields.items():
                             if field_type == "password":
@@ -374,11 +354,45 @@ def render_admin() -> None:
                                     test_results.append(f"✅ {label}: Key đã sẵn sàng")
                                 else:
                                     test_results.append(f"❌ {label}: Key trống hoặc chưa thay đổi giá trị ví dụ")
+                    for res in test_results: st.write(res)
+                except Exception as exc: st.error(f"Lỗi khi test kết nối: {exc}")
 
-                    for res in test_results:
-                        st.write(res)
-                except Exception as exc:
-                    st.error(f"Lỗi khi test kết nối: {exc}")
+    # ---------- TAB 4: CẤU HÌNH AUDIT AGENT ----------
+    with tab_audit_config:
+        st.subheader("🔍 Cấu hình AI Quét Kiểm toán (Audit Agent)")
+        st.caption("Quản lý Model và Keys xoay vòng (Rotation). Thay đổi tại đây sẽ cập nhật vào file .env và áp dụng ngay lập tức.")
+
+        with st.form(key="audit_agent_config_form"):
+            model_options = ['gemini-1.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash']
+            current_model = os.getenv("AUDIT_GEMINI_MODEL", "gemini-1.5-pro")
+            selected_model = st.selectbox("Model kiểm toán", options=model_options, index=model_options.index(current_model) if current_model in model_options else 0)
+            st.divider()
+            st.write("**API Keys (Xoay vòng)**")
+            key1 = st.text_input("API Key 1 (Bắt buộc)", value=os.getenv("AUDIT_GEMINI_KEY_1", ""), type="password", help="Key chính dùng cho Audit Agent")
+            key2 = st.text_input("API Key 2 (Dự phòng)", value=os.getenv("AUDIT_GEMINI_KEY_2", ""), type="password")
+            key3 = st.text_input("API Key 3 (Dự phòng)", value=os.getenv("AUDIT_GEMINI_KEY_3", ""), type="password")
+            submit_audit_btn = st.form_submit_button("💾 Lưu Cấu Hình AI Kiểm Toán", type="primary")
+            if submit_audit_btn:
+                if not key1.strip(): st.error("❌ Lỗi: API Key 1 là bắt buộc")
+                else:
+                    try:
+                        from dotenv import set_key
+                        env_path = Path(".env")
+                        if env_path.exists():
+                            import shutil
+                            shutil.copy(env_path, env_path.with_suffix(".env.bak"))
+                        set_key(str(env_path), "AUDIT_GEMINI_MODEL", selected_model)
+                        set_key(str(env_path), "AUDIT_GEMINI_KEY_1", key1)
+                        set_key(str(env_path), "AUDIT_GEMINI_KEY_2", key2)
+                        set_key(str(env_path), "AUDIT_GEMINI_KEY_3", key3)
+                        os.environ["AUDIT_GEMINI_MODEL"] = selected_model
+                        os.environ["AUDIT_GEMINI_KEY_1"] = key1
+                        os.environ["AUDIT_GEMINI_KEY_2"] = key2
+                        os.environ["AUDIT_GEMINI_KEY_3"] = key3
+                        st.session_state.audit_config = {"model": selected_model, "key1": key1, "key2": key2, "key3": key3}
+                        st.success("✅ Đã cập nhật cấu hình AI Kiểm toán thành công!")
+                        st.rerun()
+                    except Exception as exc: st.error(f"❌ Lỗi khi lưu cấu hình: {exc}")
 
 
 # ============================================================

@@ -75,6 +75,12 @@ def _read_secret(key: str, default: str = "") -> str:
 
 GEMINI_API_KEY = _read_secret("GEMINI_API_KEY")
 
+# Cấu hình riêng cho Audit Agent (ưu tiên dùng key riêng để tránh ảnh hưởng hệ thống chung)
+AUDIT_GEMINI_MODEL = os.getenv("AUDIT_GEMINI_MODEL", "gemini-1.5-pro")
+AUDIT_GEMINI_KEY_1 = _read_secret("AUDIT_GEMINI_KEY_1")
+AUDIT_GEMINI_KEY_2 = _read_secret("AUDIT_GEMINI_KEY_2")
+AUDIT_GEMINI_KEY_3 = _read_secret("AUDIT_GEMINI_KEY_3")
+
 # Mật khẩu chặn vai trò Admin trên UI. Để trống = không chặn (CHỈ dùng khi demo
 # cục bộ). Xem cảnh báo về phân quyền trong README.
 ADMIN_PASSWORD = _read_secret("ADMIN_PASSWORD", "")
