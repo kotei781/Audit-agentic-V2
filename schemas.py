@@ -329,5 +329,7 @@ class AuditReport(BaseModel):
         }
 
     def to_dict(self) -> Dict[str, Any]:
-        """Chuyển đổi đối tượng AuditReport sang dictionary để truyền cho AI Giám sát."""
-        return self.model_dump()
+        """Chuyển đổi đối tượng AuditReport sang dictionary để truyền cho AI Giám sát.
+        Tự động convert các trường datetime sang chuỗi ISO 8601 để tránh lỗi JSON serializable.
+        """
+        return self.model_dump(mode="json")
