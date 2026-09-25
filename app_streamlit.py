@@ -661,14 +661,6 @@ def _render_report(report: AuditReport) -> None:
 # ============================================================
 # ĐIỀU HƯỚNG
 # ============================================================
-if not config.GEMINI_API_KEY:
-    st.error(
-        "Chưa cấu hình `GEMINI_API_KEY`. Tạo file `.env` với dòng "
-        "`GEMINI_API_KEY=...` hoặc khai báo trong `.streamlit/secrets.toml`, "
-        "rồi khởi động lại ứng dụng."
-    )
-    st.stop()
-
 if role == ROLE_ADMIN:
     render_admin()
 else:
