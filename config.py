@@ -218,9 +218,10 @@ def validate_config() -> None:
     Kiểm tra cấu hình bắt buộc TRƯỚC khi khởi tạo Agent, để báo lỗi sớm và rõ
     ràng thay vì để lỗi bật ra giữa lúc đang gọi API.
     """
-    if not GEMINI_API_KEY:
+    # Chấp nhận GEMINI_API_KEY tổng HOẶC AUDIT_GEMINI_KEY_1 (cho Audit Agent)
+    if not (GEMINI_API_KEY or AUDIT_GEMINI_KEY_1):
         raise ConfigError(
-            "Chưa cấu hình GEMINI_API_KEY.\n"
+            "Chưa cấu hình GEMINI_API_KEY hoặc AUDIT_GEMINI_KEY_1.\n"
             "  - Cách 1: tạo file .env với dòng  GEMINI_API_KEY=AIza...\n"
             "  - Cách 2: export GEMINI_API_KEY=AIza...\n"
             "  - Cách 3: .streamlit/secrets.toml -> GEMINI_API_KEY = \"AIza...\"\n"
