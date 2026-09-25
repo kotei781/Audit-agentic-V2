@@ -88,7 +88,8 @@ with st.sidebar:
     st.divider()
     st.caption("Trạng thái hệ thống")
 
-    api_ready = bool(config.GEMINI_API_KEY)
+    # Kiểm tra xem có bất kỳ API Key Gemini nào khả dụng không (Key tổng hoặc Key Audit Agent)
+    api_ready = bool(config.GEMINI_API_KEY or os.getenv("AUDIT_GEMINI_KEY_1"))
     st.write(f"{'✅' if api_ready else '❌'} Gemini API key")
 
     stats = rag_engine.collection_stats()
