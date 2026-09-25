@@ -117,6 +117,8 @@ def get_client():
 
     chromadb, Settings = _import_chromadb()
     try:
+        # [UPDATED] Đảm bảo sử dụng PersistentClient để lưu trữ xuống đĩa cục bộ
+        # Đường dẫn được lấy từ config.CHROMA_DB_DIR (đã được .resolve() trong config.py)
         _client = chromadb.PersistentClient(
             path=str(config.CHROMA_DB_DIR),
             settings=Settings(anonymized_telemetry=False, allow_reset=False),
@@ -221,7 +223,7 @@ def embed_texts(texts: Sequence[str], task_type: str = "RETRIEVAL_DOCUMENT") -> 
     Args:
         texts: danh sách đoạn text.
         task_type: "RETRIEVAL_DOCUMENT" khi index, "RETRIEVAL_QUERY" khi truy vấn.
-                   Dùng đúng task_type cải thiện đáng kể chất lượng truy hồi.
+               Dùng đúng task_type cải thiện đáng kể chất lượng truy hồi.
 
     FIX (429 RESOURCE_EXHAUSTED — nguyên nhân gốc #2 "thiếu throttling"):
       * Chủ động nghỉ 1s giữa các batch để không dồn dập vượt hạn ngạch
@@ -466,18 +468,34 @@ def ingest_law_to_vector_db(
     source = path.name
     collection = get_collection()
 
-    existing = count_chunks_for_source(source)
-    if existing and not force_reindex:
-        logger.info("'%s' đã có %d chunk trong Vector DB — bỏ qua.", source, existing)
-        return {"source": source, "chunks": existing, "skipped": True, "status": "already_indexed"}
-
-    if existing and force_reindex:
-        delete_source(source)
-
+    # [NEW FEATURE] Cơ chế Document Index Caching bằng mã Hash nội dung
     try:
         text = extract_text(path, strict=True)
     except IngestionError:
         raise
+
+    content_hash = compute_sha256(text.encode("utf-8"))
+
+    # Kiểm tra xem hash này đã tồn tại trong Vector DB chưa
+    # Ta truy vấn 1 chunk bất kỳ của source này và so sánh hash trong metadata
+    existing_chunks = collection.get(
+        where={"source": source},
+        limit=1,
+        include=["metadatas"]
+    )
+
+    metadatas = existing_chunks.get("metadatas")
+    if metadatas and len(metadatas) > 0:
+        stored_hash = metadatas[0].get("content_hash")
+        if stored_hash == content_hash and not force_reindex:
+            # [UPDATED] Bỏ qua embedding nếu nội dung không thay đổi
+            logger.info("Tài liệu '%s' đã được index trước đó (hash khớp). Bỏ qua bước embedding.", source)
+            count = count_chunks_for_source(source)
+            return {"source": source, "chunks": count, "skipped": True, "status": "already_indexed"}
+
+    # Nếu force_reindex hoặc hash không khớp, xóa bản cũ để làm sạch
+    if existing_chunks.get("ids"):
+        delete_source(source)
 
     chunks = chunk_legal_text(text, source=source)
     if not chunks:
@@ -487,12 +505,18 @@ def ingest_law_to_vector_db(
     vectors = embed_texts([c.text for c in chunks], task_type="RETRIEVAL_DOCUMENT")
 
     try:
-        # upsert (không phải add) để index lại cùng một file không bị lỗi trùng id.
+        # [UPDATED] Lưu thêm content_hash vào metadata để phục vụ caching lần sau
+        metadatas = []
+        for c in chunks:
+            m = c.to_metadata()
+            m["content_hash"] = content_hash
+            metadatas.append(m)
+
         collection.upsert(
             ids=[c.chunk_id for c in chunks],
             embeddings=vectors,
             documents=[c.text for c in chunks],
-            metadatas=[c.to_metadata() for c in chunks],
+            metadatas=metadatas,
         )
     except Exception as exc:  # noqa: BLE001
         raise RAGError(f"Không ghi được vào ChromaDB: {exc}") from exc
