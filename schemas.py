@@ -327,3 +327,7 @@ class AuditReport(BaseModel):
             "rejected": len(self.rejected_findings()),
             "pending": len(self.pending_findings()),
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Chuyển đổi đối tượng AuditReport sang dictionary để truyền cho AI Giám sát."""
+        return self.model_dump()
