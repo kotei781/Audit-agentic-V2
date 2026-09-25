@@ -283,11 +283,11 @@ def render_admin() -> None:
         # Định nghĩa cấu hình chi tiết cho từng Tier
         config_schema = {
             "TIER1": {
-                "model": ("Model Tier 1", "selectbox", ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-3.5-flash'], "GEMINI_MODEL_TIER1"),
+                "model": ("Model Tier 1", "selectbox", ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite'], "GEMINI_MODEL_TIER1"),
                 "key": ("API Key Tier 1", "password", None, "GEMINI_API_KEY_1")
             },
             "TIER2": {
-                "model": ("Model Tier 2", "selectbox", ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-3.6-flash'], "GEMINI_MODEL_TIER2"),
+                "model": ("Model Tier 2", "selectbox", ['gemini-3.5-flash-lite', 'gemini-2.5-flash-lite', 'gemini-3.6-flash'], "GEMINI_MODEL_TIER2"),
                 "key": ("API Key Tier 2", "password", None, "GEMINI_API_KEY_2")
             },
             "TIER3": {
@@ -364,7 +364,7 @@ def render_admin() -> None:
         st.caption("Quản lý Model và Keys xoay vòng (Rotation). Thay đổi tại đây sẽ cập nhật vào file .env và áp dụng ngay lập tức.")
 
         with st.form(key="audit_agent_config_form"):
-            model_options = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.5-flash']
+            model_options = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash-lite']
             current_model = os.getenv("AUDIT_GEMINI_MODEL", "gemini-3.6-flash")
             selected_model = st.selectbox("Model kiểm toán", options=model_options, index=model_options.index(current_model) if current_model in model_options else 0)
             st.divider()

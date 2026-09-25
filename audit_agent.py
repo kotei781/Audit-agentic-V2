@@ -307,7 +307,8 @@ class AuditAgent:
 
         # Quản lý Model và Keys xoay vòng
         self.primary_model = model or config.AUDIT_GEMINI_MODEL or config.GEMINI_MODEL
-        self.fallback_model = "gemini-2.5-flash"
+        self.fallback_model = "gemini-2.5-flash-lite"
+
 
 
         # Thu thập các key không rỗng
