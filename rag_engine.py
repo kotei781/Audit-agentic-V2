@@ -179,7 +179,9 @@ def _get_genai_client():
         raise EmbeddingError("Chưa cài google-genai. Chạy: pip install google-genai") from exc
 
     config.validate_config()
-    _genai_client = genai.Client(api_key=config.GEMINI_API_KEY)
+    # Ưu tiên GEMINI_API_KEY tổng, nếu không có thì dùng AUDIT_GEMINI_KEY_1
+    api_key = config.GEMINI_API_KEY or os.getenv("AUDIT_GEMINI_KEY_1")
+    _genai_client = genai.Client(api_key=api_key)
     return _genai_client
 
 
