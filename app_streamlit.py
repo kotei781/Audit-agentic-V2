@@ -443,6 +443,11 @@ def render_user() -> None:
 
 def _run_audit(uploaded, use_sample: bool, top_k: int) -> None:
     """Trích xuất chứng từ -> chạy Agent -> lưu report vào session_state."""
+    # Reset state để tránh cộng dồn kết quả từ file cũ
+    st.session_state.report = None
+    st.session_state.supervisor_result = None
+    st.session_state.last_error = None
+
     try:
         with st.spinner("Đang trích xuất nội dung chứng từ..."):
             if use_sample and not uploaded:

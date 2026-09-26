@@ -517,14 +517,17 @@ def extract_text(file_path: Union[str, Path], strict: bool = True) -> str:
     text = extractor(path) or ""
     cleaned = normalize_whitespace(text)
 
-    if strict and len(cleaned.strip()) < config.MIN_EXTRACTED_TEXT_LENGTH:
-        raise EmptyDocumentError(
-            f"Trích xuất được quá ít nội dung từ '{path.name}' "
-            f"({len(cleaned.strip())} ký tự, ngưỡng tối thiểu "
-            f"{config.MIN_EXTRACTED_TEXT_LENGTH}).\n"
-            "Nguyên nhân phổ biến: PDF là bản SCAN ảnh, không có lớp text. "
-            "Hãy chạy OCR trước (ví dụ ocrmypdf) rồi tải lại."
-        )
+    # Tăng cường phát hiện PDF Scan và File hỏng
+    content_len = len(cleaned.strip())
+    if strict and content_len < config.MIN_EXTRACTED_TEXT_LENGTH:
+        # Nếu là PDF mà không có text -> chắc chắn là PDF Scan hoặc file hỏng
+        error_msg = f"Trích xuất được quá ít nội dung từ '{path.name}' ({content_len} ký tự)."
+        if path.suffix.lower() == '.pdf':
+            error_msg += "\nCẢNH BÁO: Đây có thể là PDF dạng ảnh quét (SCAN), không có lớp text."
+        else:
+            error_msg += "\nCẢNH BÁO: File có thể bị hỏng hoặc không chứa dữ liệu hợp lệ."
+
+        raise EmptyDocumentError(f"{error_msg}\n\nGiải pháp: Hãy chạy OCR hoặc kiểm tra lại file.")
 
     return cleaned
 
@@ -609,6 +612,10 @@ def save_temp_upload(file_obj: Any, filename: Optional[str] = None) -> Path:
     """
     raw_bytes, original_name = _extract_bytes_and_name(file_obj, filename)
 
+    # 1. Kiểm tra tính toàn vẹn: Chống file rỗng (0 byte)
+    if not raw_bytes or len(raw_bytes) == 0:
+        raise EmptyDocumentError(f"Chứng từ {original_name or 'không tên'} rỗng (0 byte).")
+
     if len(raw_bytes) > config.MAX_UPLOAD_BYTES:
         raise FileTooLargeError(
             f"Chứng từ nặng {len(raw_bytes) / 1024 / 1024:.1f} MB, "
@@ -622,6 +629,10 @@ def save_temp_upload(file_obj: Any, filename: Optional[str] = None) -> Path:
             f"Định dạng chứng từ '{extension or 'không rõ'}' không được hỗ trợ. "
             f"Chấp nhận: {', '.join(sorted(config.ALLOWED_DOCUMENT_EXTENSIONS))}"
         )
+
+    # BỔ SUNG: Tính SHA-256 để đảm bảo tính toàn vẹn của file ngay khi upload
+    file_hash = compute_sha256(raw_bytes)
+    logger.info("Chứng từ tải lên: %s | SHA-256: %s", safe_name, file_hash)
 
     target = _resolve_unique_path(config.TMP_DIR, safe_name)
     target.write_bytes(raw_bytes)

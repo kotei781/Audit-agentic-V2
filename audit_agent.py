@@ -39,10 +39,13 @@ from __future__ import annotations
 import json
 import re
 import time
+from uuid import uuid4
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
+import unit_validator
+import calc_engine
 
 import config
 import rag_engine
@@ -82,9 +85,11 @@ BẠN LÀ MỘT AI AUDIT & TAX COMPLIANCE AGENT chuyên rà soát chứng từ t
 và phát hiện dấu hiệu sai phạm.
 
 VAI TRÒ:
-Đối chiếu từng mục trong chứng từ tài chính được cung cấp với các đoạn văn bản \
-quy định pháp luật được cung cấp trong prompt, nhằm phát hiện sai lệch, sai sót \
-hoặc dấu hiệu trốn thuế/gian lận.
+1) Đối chiếu từng mục trong chứng từ tài chính với các quy định pháp luật được cung cấp.
+2) KIỂM TRA TOÁN HỌC ĐỘC LẬP: Bạn phải tự tính toán lại (re-calculate) tất cả các con số \
+   có trong bảng (ví dụ: Số lượng x Đơn giá = Thành tiền, Tổng các dòng = Tổng cộng). \
+   Nếu kết quả tự tính khác với con số ghi trong chứng từ (dù là số nhập tay), \
+   PHẢI báo cáo là vi phạm về tính chính xác của số liệu.
 
 QUY TẮC BẮT BUỘC:
 
@@ -473,6 +478,31 @@ class AuditAgent:
             raise GeminiAPIError(f"Phản hồi bị chặn bởi bộ lọc an toàn (finish_reason={reason}).")
 
     # ---------- API chính ----------
+    def _extract_structured_data(self, text: str) -> List[Dict[str, Any]]:
+        """
+        Hàm helper chuyển đổi text thô thành dữ liệu cấu trúc (List[Dict]).
+        Sử dụng regex để tìm các dòng có định dạng số liệu bảng.
+        """
+        structured_data = []
+        lines = text.split('\n')
+
+        # Pattern tìm dòng có ít nhất 3 cụm số (Số lượng, Đơn giá, Thành tiền)
+        # Chấp nhận số có dấu phẩy/chấm phân cách
+        num_pattern = r'(\d[\d,.]*)'
+
+        for line in lines:
+            matches = re.findall(num_pattern, line)
+            if len(matches) >= 3:
+                # Giả định thứ tự: Số lượng, Đơn giá, Thành tiền (phổ biến trong chứng từ)
+                structured_data.append({
+                    "quantity": matches[0],
+                    "unit_price": matches[1],
+                    "total_amount": matches[2],
+                    "unit": " ".join(re.findall(r'[a-zA-ZÀ-ỹ\s]{2,}', line)).strip()
+                })
+
+        return structured_data
+
     def run_audit(
         self,
         document_text: str,
@@ -535,8 +565,39 @@ class AuditAgent:
         response = self._call_gemini(user_prompt)
         findings = self._extract_findings(response)
 
-        # --- Bước 3: kiểm chứng trích dẫn ---
+        # --- Bước 3: kiểm chứng trích dẫn và validate đơn vị ---
         findings = _apply_verification(findings, document_text)
+
+        # [NEW] Kiểm tra lỗi đơn vị độc lập
+        unit_violations = unit_validator.validate_unit_consistency(document_text)
+        for uv in unit_violations:
+            # Chuyển đổi UnitViolation thành ViolationCheckResult để đồng bộ với báo cáo
+            unit_finding = ViolationCheckResult(
+                reasoning_steps=f"Hệ thống tự động quét đơn vị: {uv.explanation}",
+                has_violation=ViolationStatus.YES,
+                input_citation=uv.text_segment,
+                rule_citation="QUY TẮC NHẤT QUÁN ĐƠN VỊ",
+                explanation=uv.explanation,
+                confidence_score=1.0,
+                recommended_action=RecommendedAction.FLAG_FOR_HUMAN_REVIEW,
+                finding_id=f"unit_{uuid4().hex[:8]}",
+                grounding_verified=True,
+                grounding_score=1.0
+            )
+            findings.append(unit_finding)
+
+        # [NEW] Gọi calc_engine để quét lỗi tính toán nhập tay (hardcoded values)
+        math_errors = calc_engine.analyze_document_math(document_text)
+        for err in math_errors:
+            findings.append(ViolationCheckResult(
+                reasoning_steps=f"Hệ thống tính toán độc lập phát hiện sai số: {err['explanation']}",
+                has_violation=ViolationStatus.YES,
+                input_citation=err['citation'],
+                rule_citation="QUY TẮC CHÍNH XÁC SỐ LIỆU",
+                explanation=err['explanation'],
+                confidence_score=1.0,
+                recommended_action=RecommendedAction.FLAG_FOR_HUMAN_REVIEW
+            ))
 
         chunk_ids = [chunk.chunk_id for chunk in retrieved_chunks]
         for finding in findings:
