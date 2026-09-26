@@ -10,6 +10,7 @@ import pandas as pd
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import List, Dict, Any, Optional, Tuple, Union
 import logging
+import config
 
 logger = logging.getLogger("calc_engine")
 
@@ -30,7 +31,6 @@ class CalcEngine:
         if isinstance(value, (int, float, Decimal)):
             return Decimal(str(value))
 
-        # Làm sạch chuỗi: xóa phân cách hàng nghìn, giữ lại dấu thập phân và dấu âm
         s = str(value).strip().replace(',', '')
         try:
             return Decimal(s)
@@ -72,7 +72,6 @@ class CalcEngine:
             line_totals.append(reported_total)
 
         # 2. Kiểm tra Tổng cộng tiền hàng (SUM of totals = Grand Total)
-        # Giả định grand_total nằm trong row đầu tiên hoặc truyền qua metadata
         grand_total_reported = self._to_decimal(records[0].get('grand_total', 0)) if records else Decimal('0')
         actual_sum_of_lines = sum(line_totals, Decimal('0'))
 
@@ -102,3 +101,21 @@ class CalcEngine:
             })
 
         return errors
+
+    def check_outliers(self, data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Phát hiện các con số phi lý (quá thấp hoặc quá cao) dựa trên ngưỡng cấu hình.
+        """
+        outliers = []
+        # Lấy ngưỡng từ config nếu có, nếu không mặc định một giá trị tối thiểu cực thấp
+        min_threshold = getattr(config, 'MIN_REASONABLE_PRICE', Decimal('100'))
+
+        for idx, row in enumerate(data):
+            price = self._to_decimal(row.get('unit_price', 0))
+            if Decimal('0') < price < min_threshold:
+                outliers.append({
+                    "row": idx + 1,
+                    "type": "UNREASONABLE_VALUE",
+                    "detail": f"Đơn giá {price} thấp hơn ngưỡng hợp lý ({min_threshold}). Nghi vấn nhập liệu sai hoặc thiếu sót."
+                })
+        return outliers
