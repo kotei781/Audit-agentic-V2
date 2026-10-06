@@ -63,6 +63,21 @@ STATUS_TEXT = {
 # ============================================================
 # STATE
 # ============================================================
+def _refresh_runtime_config() -> None:
+    """Reload config sau khi người dùng lưu key qua Streamlit UI."""
+    from dotenv import load_dotenv
+    import importlib
+
+    load_dotenv(override=True)
+    importlib.reload(config)
+
+    # Cập nhật rõ ràng cho các biến alias được dùng trong app và worker
+    config.GEMINI_API_KEY = config.GEMINI_API_KEY or os.getenv("GEMINI_API_KEY", "")
+    config.AUDIT_GEMINI_KEY_1 = config.AUDIT_GEMINI_KEY_1 or os.getenv("AUDIT_GEMINI_KEY_1", "") or os.getenv("GEMINI_API_KEY_1", "")
+    config.AUDIT_GEMINI_KEY_2 = config.AUDIT_GEMINI_KEY_2 or os.getenv("AUDIT_GEMINI_KEY_2", "") or os.getenv("GEMINI_API_KEY_2", "")
+    config.AUDIT_GEMINI_KEY_3 = config.AUDIT_GEMINI_KEY_3 or os.getenv("AUDIT_GEMINI_KEY_3", "") or os.getenv("GEMINI_API_KEY_3", "")
+
+
 def _init_state() -> None:
     defaults = {
         "report": None,
@@ -327,6 +342,13 @@ def render_admin() -> None:
                     if not env_path.exists(): lines = []
                     else:
                         with open(env_path, "r", encoding="utf-8") as f: lines = f.readlines()
+
+                    # Ghi đồng bộ cả biến lâu đời và biến alias mới để tránh lệch tên key.
+                    alias_map = {
+                        "GEMINI_API_KEY_1": ["GEMINI_API_KEY_1", "AUDIT_GEMINI_KEY_1", "GEMINI_API_KEY"],
+                        "GEMINI_API_KEY_2": ["GEMINI_API_KEY_2", "AUDIT_GEMINI_KEY_2"],
+                        "GEMINI_API_KEY_3": ["GEMINI_API_KEY_3", "AUDIT_GEMINI_KEY_3"],
+                    }
                     for env_var, new_val in user_inputs.items():
                         found = False
                         for idx, line in enumerate(lines):
@@ -335,8 +357,24 @@ def render_admin() -> None:
                                 found = True
                                 break
                         if not found: lines.append(f"{env_var}={new_val}\n")
+
+                        for alias in alias_map.get(env_var, []):
+                            alias_found = False
+                            for idx, line in enumerate(lines):
+                                if line.startswith(f"{alias}="):
+                                    lines[idx] = f"{alias}={new_val}\n"
+                                    alias_found = True
+                                    break
+                            if not alias_found:
+                                lines.append(f"{alias}={new_val}\n")
+
                     with open(env_path, "w", encoding="utf-8") as f: f.writelines(lines)
-                    for env_var, new_val in user_inputs.items(): os.environ[env_var] = new_val
+                    for env_var, new_val in user_inputs.items():
+                        os.environ[env_var] = new_val
+                        for alias in alias_map.get(env_var, []):
+                            os.environ[alias] = new_val
+
+                    _refresh_runtime_config()
                     st.success("✅ Đã cập nhật cấu hình Model và API Keys thành công!")
                     st.rerun()
                 except Exception as exc: st.error(f"❌ Lỗi khi lưu cấu hình: {exc}")
@@ -386,10 +424,17 @@ def render_admin() -> None:
                         set_key(str(env_path), "AUDIT_GEMINI_KEY_1", key1)
                         set_key(str(env_path), "AUDIT_GEMINI_KEY_2", key2)
                         set_key(str(env_path), "AUDIT_GEMINI_KEY_3", key3)
+                        set_key(str(env_path), "GEMINI_API_KEY_1", key1)
+                        set_key(str(env_path), "GEMINI_API_KEY_2", key2)
+                        set_key(str(env_path), "GEMINI_API_KEY_3", key3)
                         os.environ["AUDIT_GEMINI_MODEL"] = selected_model
                         os.environ["AUDIT_GEMINI_KEY_1"] = key1
                         os.environ["AUDIT_GEMINI_KEY_2"] = key2
                         os.environ["AUDIT_GEMINI_KEY_3"] = key3
+                        os.environ["GEMINI_API_KEY_1"] = key1
+                        os.environ["GEMINI_API_KEY_2"] = key2
+                        os.environ["GEMINI_API_KEY_3"] = key3
+                        _refresh_runtime_config()
                         st.session_state.audit_config = {"model": selected_model, "key1": key1, "key2": key2, "key3": key3}
                         st.success("✅ Đã cập nhật cấu hình AI Kiểm toán thành công!")
                         st.rerun()

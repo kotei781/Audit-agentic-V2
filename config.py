@@ -60,17 +60,34 @@ def _read_secret(key: str, default: str = "") -> str:
     Đọc secret theo thứ tự ưu tiên: biến môi trường/.env trước, sau đó mới
     tới st.secrets. Import streamlit được đặt BÊN TRONG hàm để module này
     vẫn dùng được ở môi trường CLI thuần (không cài Streamlit).
+
+    Hỗ trợ alias tên key để UI Streamlit nhập trên biến `GEMINI_API_KEY_1` hoặc
+    `AUDIT_GEMINI_KEY_1` vẫn được nhận biết mà không cần reload project.
     """
-    value = os.getenv(key)
-    if value:
-        return value.strip()
+    alias_map = {
+        "GEMINI_API_KEY": ("GEMINI_API_KEY", "GEMINI_API_KEY_1", "AUDIT_GEMINI_KEY_1"),
+        "AUDIT_GEMINI_KEY_1": ("AUDIT_GEMINI_KEY_1", "GEMINI_API_KEY_1", "GEMINI_API_KEY"),
+        "AUDIT_GEMINI_KEY_2": ("AUDIT_GEMINI_KEY_2", "GEMINI_API_KEY_2"),
+        "AUDIT_GEMINI_KEY_3": ("AUDIT_GEMINI_KEY_3", "GEMINI_API_KEY_3"),
+    }
+    candidate_keys = alias_map.get(key, (key,))
+
+    for name in candidate_keys:
+        value = os.getenv(name)
+        if value and value.strip():
+            return value.strip()
 
     try:  # pragma: no cover - chỉ chạy khi ở trong runtime Streamlit
         import streamlit as st
 
-        return str(st.secrets[key]).strip()
+        for name in candidate_keys:
+            secret_value = st.secrets.get(name)
+            if secret_value and str(secret_value).strip():
+                return str(secret_value).strip()
     except Exception:
-        return default
+        pass
+
+    return default
 
 
 GEMINI_API_KEY = _read_secret("GEMINI_API_KEY")
@@ -219,8 +236,16 @@ def validate_config() -> None:
     Kiểm tra cấu hình bắt buộc TRƯỚC khi khởi tạo Agent, để báo lỗi sớm và rõ
     ràng thay vì để lỗi bật ra giữa lúc đang gọi API.
     """
-    # Chấp nhận GEMINI_API_KEY tổng HOẶC AUDIT_GEMINI_KEY_1 (cho Audit Agent)
-    if not (GEMINI_API_KEY or AUDIT_GEMINI_KEY_1):
+    # Chấp nhận cả key tổng lẫn key audit; hỗ trợ cả tên biến legacy và alias từ UI
+    available_keys = [
+        GEMINI_API_KEY,
+        AUDIT_GEMINI_KEY_1,
+        os.getenv("GEMINI_API_KEY_1"),
+        os.getenv("AUDIT_GEMINI_KEY_1"),
+        os.getenv("GEMINI_API_KEY_2"),
+        os.getenv("AUDIT_GEMINI_KEY_2"),
+    ]
+    if not any(key and str(key).strip() for key in available_keys):
         raise ConfigError(
             "Chưa cấu hình GEMINI_API_KEY hoặc AUDIT_GEMINI_KEY_1.\n"
             "  - Cách 1: tạo file .env với dòng  GEMINI_API_KEY=AIza...\n"
