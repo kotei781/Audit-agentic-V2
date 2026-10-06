@@ -12,6 +12,8 @@ chromadb>=0.5.0,<2.0.0
 
 # --- Model & validation ---
 pydantic>=2.7.0,<3.0.0
+pandas>=2.1.0,<3.0.0
+rank-bm25>=0.2.2,<0.3.0
 
 # --- Cấu hình ---
 python-dotenv>=1.0.0,<2.0.0

@@ -569,35 +569,41 @@ class AuditAgent:
         findings = _apply_verification(findings, document_text)
 
         # [NEW] Kiểm tra lỗi đơn vị độc lập
-        unit_violations = unit_validator.validate_unit_consistency(document_text)
+        validator = unit_validator.UnitValidator()
+        unit_violations = validator.validate_unit_consistency(document_text)
         for uv in unit_violations:
-            # Chuyển đổi UnitViolation thành ViolationCheckResult để đồng bộ với báo cáo
+            explanation = getattr(uv, "explanation", None) or getattr(uv, "detail", "")
+            text_segment = getattr(uv, "text_segment", None) or getattr(uv, "detail", "")
             unit_finding = ViolationCheckResult(
-                reasoning_steps=f"Hệ thống tự động quét đơn vị: {uv.explanation}",
+                reasoning_steps=f"Hệ thống tự động quét đơn vị: {explanation}",
                 has_violation=ViolationStatus.YES,
-                input_citation=uv.text_segment,
+                input_citation=text_segment,
                 rule_citation="QUY TẮC NHẤT QUÁN ĐƠN VỊ",
-                explanation=uv.explanation,
+                explanation=explanation,
                 confidence_score=1.0,
                 recommended_action=RecommendedAction.FLAG_FOR_HUMAN_REVIEW,
                 finding_id=f"unit_{uuid4().hex[:8]}",
                 grounding_verified=True,
-                grounding_score=1.0
+                grounding_score=1.0,
             )
             findings.append(unit_finding)
 
         # [NEW] Gọi calc_engine để quét lỗi tính toán nhập tay (hardcoded values)
-        math_errors = calc_engine.analyze_document_math(document_text)
+        math_errors = calc_engine.CalcEngine().analyze_document_math(document_text)
         for err in math_errors:
-            findings.append(ViolationCheckResult(
-                reasoning_steps=f"Hệ thống tính toán độc lập phát hiện sai số: {err['explanation']}",
-                has_violation=ViolationStatus.YES,
-                input_citation=err['citation'],
-                rule_citation="QUY TẮC CHÍNH XÁC SỐ LIỆU",
-                explanation=err['explanation'],
-                confidence_score=1.0,
-                recommended_action=RecommendedAction.FLAG_FOR_HUMAN_REVIEW
-            ))
+            explanation = err.get("explanation") or err.get("detail") or "Lỗi tính toán được phát hiện."
+            citation = err.get("citation") or "Dữ liệu đang xét"
+            findings.append(
+                ViolationCheckResult(
+                    reasoning_steps=f"Hệ thống tính toán độc lập phát hiện sai số: {explanation}",
+                    has_violation=ViolationStatus.YES,
+                    input_citation=citation,
+                    rule_citation="QUY TẮC CHÍNH XÁC SỐ LIỆU",
+                    explanation=explanation,
+                    confidence_score=1.0,
+                    recommended_action=RecommendedAction.FLAG_FOR_HUMAN_REVIEW,
+                )
+            )
 
         chunk_ids = [chunk.chunk_id for chunk in retrieved_chunks]
         for finding in findings:

@@ -160,7 +160,8 @@ MIN_EXTRACTED_TEXT_LENGTH = int(os.getenv("MIN_EXTRACTED_TEXT_LENGTH", "200"))
 GROUNDING_THRESHOLD = float(os.getenv("GROUNDING_THRESHOLD", "0.85"))
 
 # Cắt bớt tài liệu quá dài trước khi đưa vào prompt (ký tự).
-MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "60000"))
+# Giữ mức mặc định đủ rộng để không xén mất sheet Excel/đầu ra kế toán lớn.
+MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "500000"))
 
 
 # ============================================================
